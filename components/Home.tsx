@@ -131,6 +131,7 @@ function WordForm({
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ word: check.word }),
+        signal: AbortSignal.timeout(50_000), // 応答がなくても、いつまでも「準備中」のままにしない
       });
       const data = (await res.json()) as { result: string; id?: string; message?: string };
       if (data.result === "ok" && data.id) {

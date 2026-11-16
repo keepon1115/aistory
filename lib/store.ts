@@ -139,7 +139,11 @@ export function getStore(): Store {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (url && key) {
-    cached = supabaseStore(createClient(url, key, { auth: { persistSession: false } }));
+    cached = supabaseStore(createClient(url, key, {
+        auth: { persistSession: false },
+        // DBが応答しないときに、いつまでも待ち続けないようにする
+        global: { fetch: (input, init) => fetch(input, { ...init, signal: AbortSignal.timeout(10_000) }) },
+      }));
   } else if (process.env.NODE_ENV !== "production") {
     console.warn("[genko] SUPABASE_URL が未設定のため、メモリ上のDBを使います（開発用）");
     cached = memoryStore();
