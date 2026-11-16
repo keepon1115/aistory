@@ -1,5 +1,6 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
+import { FinishReason, GoogleGenAI } from "@google/genai";
 import { STORY_MAX } from "./config";
 
 export type AiResult = { ok: true; story: string } | { ok: false };
@@ -21,13 +22,19 @@ const SYSTEM_PROMPT = `あなたは、小学生から大人までが集まる学
 
 # 物語の条件（ok=true のとき、すべて満たす）
 - 来場者の言葉を「冒頭」として、そのまま自然につながる続きだけを書く。来場者の言葉そのものは繰り返さない。
+- 来場者の言葉が物語の中心になるようにする。言葉の意味や響きが、最後まで物語を動かしていること。
+- 主人公（人・動物・モノなど）は、来場者の言葉から思いつくものを自由に選ぶ。実在の人名は使わない。
 - 長さは180〜230文字。改行なしの1段落。
-- オノマトペ（擬音語・擬態語）を多く使う。
+- 文体は「だ・である」調。中学生が一度読んで分かる言葉で書く。一文は短めにする。
+- 物語の中で、小さな出来事や発見をひとつ起こす。情景を並べるだけで終わらせない。
+- たとえ（「〜のような」「〜みたいに」）を1つ入れる。
+- 音以外の感覚（におい・手ざわり・あたたかさや冷たさ・味・色など）を少なくとも1つ入れる。
+- オノマトペ（擬音語・擬態語）は1〜2個まで。使いすぎない。
 - 明るい物語にする。
 - 秋または冬を感じられる情景を入れる。
-- 最後の一文は、正解のない問いで終わる。
-- それ以外の内容は、来場者の言葉に合わせて自由に考える。
-- 子どもが読むので、怖い・暴力的・性的な内容にしない。
+- 最後の一文は「あなたなら」で始まる、正解のない問いにする。
+- 次のものは使わない: 教訓や説教（「〜が大切だ」など）、カタカナ語の多用、「希望」「未来」「夢」「奇跡」のような抽象的な言葉。
+- 子どもも読むので、怖い・暴力的・性的な内容にしない。
 
 # 出力
 JSONのみ。ok=false のとき story は空文字にしてください。`;
@@ -66,18 +73,61 @@ export async function judgeAndWrite(word: string): Promise<AiResult> {
   throw new Error("story generation failed");
 }
 
-let client: Anthropic | null = null;
-
-async function callOnce(word: string): Promise<AiResult> {
-  client ??= new Anthropic({ timeout: 40_000, maxRetries: 1 }); // ANTHROPIC_API_KEY を環境変数から読む
+/** GEMINI_API_KEY があれば Gemini、なければ Claude を使う */
+function callOnce(word: string): Promise<AiResult> {
   // タグを壊せないよう、山かっこは取り除いてから渡す
-  const safeWord = word.replace(/[<>]/g, "");
-  const response = await client.messages.create({
+  const input = `<word>${word.replace(/[<>]/g, "")}</word>`;
+  return process.env.GEMINI_API_KEY ? callGemini(input) : callClaude(input);
+}
+
+function parseOutput(text: string): AiResult {
+  const parsed = JSON.parse(text) as { ok?: unknown; story?: unknown };
+  if (typeof parsed.ok !== "boolean" || typeof parsed.story !== "string") throw new Error("unexpected AI output");
+  return parsed.ok ? { ok: true, story: parsed.story } : { ok: false };
+}
+
+let gemini: GoogleGenAI | null = null;
+
+// 安全フィルターで止まったものは「通さない」として扱う
+const GEMINI_BLOCKED = new Set<FinishReason | undefined>([
+  FinishReason.SAFETY,
+  FinishReason.PROHIBITED_CONTENT,
+  FinishReason.BLOCKLIST,
+  FinishReason.SPII,
+]);
+
+async function callGemini(input: string): Promise<AiResult> {
+  gemini ??= new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY, httpOptions: { timeout: 40_000 } });
+  const response = await gemini.models.generateContent({
+    model: process.env.GEMINI_MODEL || "gemini-3.8-flash",
+    contents: input,
+    config: {
+      systemInstruction: SYSTEM_PROMPT,
+      responseMimeType: "application/json",
+      responseJsonSchema: SCHEMA,
+      maxOutputTokens: 8000,
+    },
+  });
+
+  if (response.promptFeedback?.blockReason) return { ok: false };
+  const finish = response.candidates?.[0]?.finishReason;
+  if (GEMINI_BLOCKED.has(finish)) return { ok: false };
+  if (finish === FinishReason.MAX_TOKENS) throw new Error("response truncated");
+  const text = response.text;
+  if (!text) throw new Error("empty AI output");
+  return parseOutput(text);
+}
+
+let claude: Anthropic | null = null;
+
+async function callClaude(input: string): Promise<AiResult> {
+  claude ??= new Anthropic({ timeout: 40_000, maxRetries: 1 }); // ANTHROPIC_API_KEY を環境変数から読む
+  const response = await claude.messages.create({
     model: process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5",
     max_tokens: 8000,
     system: SYSTEM_PROMPT,
     output_config: { effort: "medium", format: { type: "json_schema", schema: SCHEMA } },
-    messages: [{ role: "user", content: `<word>${safeWord}</word>` }],
+    messages: [{ role: "user", content: input }],
   });
 
   // 安全分類器による拒否は「通さない」として扱う
@@ -85,7 +135,5 @@ async function callOnce(word: string): Promise<AiResult> {
   if (response.stop_reason === "max_tokens") throw new Error("response truncated");
 
   const text = response.content.map((b) => (b.type === "text" ? b.text : "")).join("");
-  const parsed = JSON.parse(text) as { ok?: unknown; story?: unknown };
-  if (typeof parsed.ok !== "boolean" || typeof parsed.story !== "string") throw new Error("unexpected AI output");
-  return parsed.ok ? { ok: true, story: parsed.story } : { ok: false };
+  return parseOutput(text);
 }
