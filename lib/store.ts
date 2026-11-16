@@ -1,6 +1,9 @@
 import "server-only";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
+/** 他のアプリとSupabaseプロジェクトを共有しても名前がぶつからないよう、接頭辞をつけている */
+const TABLE = "aistory_stories";
+
 export type StoryStatus = "queued" | "showing" | "shown" | "skipped";
 
 export type Story = {
@@ -41,41 +44,41 @@ function supabaseStore(client: SupabaseClient): Store {
   };
   return {
     async insert(word, body) {
-      return must(await client.from("stories").insert({ word, body }).select().single()) as Story;
+      return must(await client.from(TABLE).insert({ word, body }).select().single()) as Story;
     },
     async get(id) {
-      return must(await client.from("stories").select("*").eq("id", id).maybeSingle()) as Story | null;
+      return must(await client.from(TABLE).select("*").eq("id", id).maybeSingle()) as Story | null;
     },
     async countQueued() {
-      const r = await client.from("stories").select("id", { count: "exact", head: true }).eq("status", "queued");
+      const r = await client.from(TABLE).select("id", { count: "exact", head: true }).eq("status", "queued");
       if (r.error) throw new Error(r.error.message);
       return r.count ?? 0;
     },
     async countAhead(story) {
       const q = await client
-        .from("stories")
+        .from(TABLE)
         .select("id", { count: "exact", head: true })
         .eq("status", "queued")
         .lt("seq", story.seq);
       if (q.error) throw new Error(q.error.message);
-      const s = await client.from("stories").select("id", { count: "exact", head: true }).eq("status", "showing");
+      const s = await client.from(TABLE).select("id", { count: "exact", head: true }).eq("status", "showing");
       if (s.error) throw new Error(s.error.message);
       return (q.count ?? 0) + (s.count ?? 0);
     },
     async countToday() {
       const r = await client
-        .from("stories")
+        .from(TABLE)
         .select("id", { count: "exact", head: true })
         .gte("created_at", startOfTodayJst());
       if (r.error) throw new Error(r.error.message);
       return r.count ?? 0;
     },
     async claimNext() {
-      const rows = must(await client.rpc("claim_next_story")) as Story[] | null;
+      const rows = must(await client.rpc("aistory_claim_next_story")) as Story[] | null;
       return rows && rows.length > 0 ? rows[0] : null;
     },
     async finish(id, result) {
-      must(await client.from("stories").update({ status: result }).eq("id", id).eq("status", "showing"));
+      must(await client.from(TABLE).update({ status: result }).eq("id", id).eq("status", "showing"));
     },
   };
 }

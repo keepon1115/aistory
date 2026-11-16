@@ -14,7 +14,7 @@
 
 ## 仕組み（1分で）
 
-1. `POST /api/stories` … 言葉を検証 → AIを **1回** 呼んで「通してよいか」と「物語」を同時に得る → 通ったものだけ `stories` に保存（順番待ち）。
+1. `POST /api/stories` … 言葉を検証 → AIを **1回** 呼んで「通してよいか」と「物語」を同時に得る → 通ったものだけ `aistory_stories` に保存（順番待ち）。
 2. `/screen` は2秒ごとに `POST /api/screen/next` を呼び、列の先頭を取り出して演出（白→5秒の沈黙→灰色→15秒→2秒で消える）。投影中にAIは呼ばない。
 3. 演出が終わると `POST /api/screen/done` で「投影済み」にする。スマホは5秒ごとに状態を見ていて、投影済みになったら物語を表示する。
 4. 状態は `queued → showing → shown`（Sキーでのスキップは `skipped`）。物語の本文は `shown` になるまでスマホ側へ返さない。
@@ -30,7 +30,7 @@
 
 ## 1. Supabase
 
-SQL Editor に [`supabase/schema.sql`](supabase/schema.sql) の中身を貼って1回実行する（テーブル `stories`、RLS有効・ポリシーなし、`claim_next_story()` 関数）。
+SQL Editor に [`supabase/schema.sql`](supabase/schema.sql) の中身を貼って1回実行する（テーブル `aistory_stories`、RLS有効・ポリシーなし、`aistory_claim_next_story()` 関数。名前に `aistory_` を付けているので、他のアプリと同じSupabaseプロジェクトを共有できる）。
 Project Settings → API から **Project URL** と **service_role key** を控える。
 
 ## 2. 環境変数
