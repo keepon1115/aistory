@@ -10,7 +10,7 @@
 | `/screen?key=<SCREEN_KEY>` | 投影用PC（全画面） |
 | `/s/<id>` | 物語のページ（キオスクのQRの行き先） |
 
-技術: Next.js 15（App Router）/ TypeScript / Tailwind CSS / Supabase（Postgres）/ Anthropic 公式 SDK / Vercel
+技術: Next.js 15（App Router）/ TypeScript / Tailwind CSS / Supabase（Postgres）/ Google Gen AI SDK（Gemini）または Anthropic 公式 SDK（Claude） / Vercel
 
 ## 仕組み（1分で）
 
@@ -39,10 +39,12 @@ Vercel の Project Settings → Environment Variables（ローカルは `.env.lo
 
 | 名前 | 必須 | 説明 |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | ○ | サーバー側のみ。`MOCK_AI=1` なら不要 |
+| `GEMINI_API_KEY` | △ | サーバー側のみ。これがあれば Gemini を使う（Claude より優先）。Google AI Studio で作る |
+| `ANTHROPIC_API_KEY` | △ | サーバー側のみ。`GEMINI_API_KEY` が無いときに Claude を使う。どちらか一方は必須（`MOCK_AI=1` なら不要） |
 | `SUPABASE_URL` | ○ | Project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | ○ | サーバー側のみ。ブラウザには出さない |
 | `SCREEN_KEY` | ○ | 投影用APIの合言葉。推測されにくい長い文字列にする（例: `openssl rand -hex 16`） |
+| `GEMINI_MODEL` | | 初期値 `gemini-3.8-flash` |
 | `ANTHROPIC_MODEL` | | 初期値 `claude-sonnet-5-5` |
 | `DAILY_LIMIT` | | 1日の受付総数の上限。初期値 `1000` |
 | `MOCK_AI` | | `1` でAIを呼ばず固定の物語を返す。**本番は `0` か未設定** |
@@ -96,5 +98,5 @@ npm run dev
 
 - 同じ端末の60秒の再送信禁止は、ブラウザの `localStorage` で見ている（キオスクは対象外）。悪意ある連投は止められないので、`DAILY_LIMIT` と順番待ち30件の上限が歯止め。
 - `DAILY_LIMIT` の数え方は「保存された（判定を通った）物語の数」。判定で弾かれた分は数えない（指示書の「通ったものだけ保存」に従うため）。
-- AIが安全分類器で拒否した場合は「通さない」扱い。Sonnet 5.5 向けのサーバー側フォールバック（`fallbacks`）は使っていない。
+- AIが安全分類器（Gemini は安全フィルター）で拒否・停止した場合は「通さない」扱い。Sonnet 5.5 向けのサーバー側フォールバック（`fallbacks`）は使っていない。
 - 保存画像は端末内の canvas で作る。Web Share API → ダウンロード → 画像を表示して長押し、の順に案内する。

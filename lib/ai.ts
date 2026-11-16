@@ -1,5 +1,6 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
+import { FinishReason, GoogleGenAI } from "@google/genai";
 import { STORY_MAX } from "./config";
 
 export type AiResult = { ok: true; story: string } | { ok: false };
@@ -72,18 +73,61 @@ export async function judgeAndWrite(word: string): Promise<AiResult> {
   throw new Error("story generation failed");
 }
 
-let client: Anthropic | null = null;
-
-async function callOnce(word: string): Promise<AiResult> {
-  client ??= new Anthropic({ timeout: 40_000, maxRetries: 1 }); // ANTHROPIC_API_KEY を環境変数から読む
+/** GEMINI_API_KEY があれば Gemini、なければ Claude を使う */
+function callOnce(word: string): Promise<AiResult> {
   // タグを壊せないよう、山かっこは取り除いてから渡す
-  const safeWord = word.replace(/[<>]/g, "");
-  const response = await client.messages.create({
+  const input = `<word>${word.replace(/[<>]/g, "")}</word>`;
+  return process.env.GEMINI_API_KEY ? callGemini(input) : callClaude(input);
+}
+
+function parseOutput(text: string): AiResult {
+  const parsed = JSON.parse(text) as { ok?: unknown; story?: unknown };
+  if (typeof parsed.ok !== "boolean" || typeof parsed.story !== "string") throw new Error("unexpected AI output");
+  return parsed.ok ? { ok: true, story: parsed.story } : { ok: false };
+}
+
+let gemini: GoogleGenAI | null = null;
+
+// 安全フィルターで止まったものは「通さない」として扱う
+const GEMINI_BLOCKED = new Set<FinishReason | undefined>([
+  FinishReason.SAFETY,
+  FinishReason.PROHIBITED_CONTENT,
+  FinishReason.BLOCKLIST,
+  FinishReason.SPII,
+]);
+
+async function callGemini(input: string): Promise<AiResult> {
+  gemini ??= new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY, httpOptions: { timeout: 40_000 } });
+  const response = await gemini.models.generateContent({
+    model: process.env.GEMINI_MODEL || "gemini-3.8-flash",
+    contents: input,
+    config: {
+      systemInstruction: SYSTEM_PROMPT,
+      responseMimeType: "application/json",
+      responseJsonSchema: SCHEMA,
+      maxOutputTokens: 8000,
+    },
+  });
+
+  if (response.promptFeedback?.blockReason) return { ok: false };
+  const finish = response.candidates?.[0]?.finishReason;
+  if (GEMINI_BLOCKED.has(finish)) return { ok: false };
+  if (finish === FinishReason.MAX_TOKENS) throw new Error("response truncated");
+  const text = response.text;
+  if (!text) throw new Error("empty AI output");
+  return parseOutput(text);
+}
+
+let claude: Anthropic | null = null;
+
+async function callClaude(input: string): Promise<AiResult> {
+  claude ??= new Anthropic({ timeout: 40_000, maxRetries: 1 }); // ANTHROPIC_API_KEY を環境変数から読む
+  const response = await claude.messages.create({
     model: process.env.ANTHROPIC_MODEL || "claude-sonnet-5-5",
     max_tokens: 8000,
     system: SYSTEM_PROMPT,
     output_config: { effort: "medium", format: { type: "json_schema", schema: SCHEMA } },
-    messages: [{ role: "user", content: `<word>${safeWord}</word>` }],
+    messages: [{ role: "user", content: input }],
   });
 
   // 安全分類器による拒否は「通さない」として扱う
@@ -91,7 +135,5 @@ async function callOnce(word: string): Promise<AiResult> {
   if (response.stop_reason === "max_tokens") throw new Error("response truncated");
 
   const text = response.content.map((b) => (b.type === "text" ? b.text : "")).join("");
-  const parsed = JSON.parse(text) as { ok?: unknown; story?: unknown };
-  if (typeof parsed.ok !== "boolean" || typeof parsed.story !== "string") throw new Error("unexpected AI output");
-  return parsed.ok ? { ok: true, story: parsed.story } : { ok: false };
+  return parseOutput(text);
 }
