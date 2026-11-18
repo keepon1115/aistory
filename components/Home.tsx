@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import QRCode from "qrcode";
 import { useEffect, useRef, useState } from "react";
@@ -197,6 +198,11 @@ function WordForm({
       >
         {cooldown > 0 ? `あと${cooldown}秒で送れます` : "物語をはじめる"}
       </button>
+      {!kiosk && (
+        <Link href="/library" className="text-center text-sm tracking-widest text-white/60 underline underline-offset-4">
+          みんなのライブラリを見る
+        </Link>
+      )}
     </form>
   );
 }

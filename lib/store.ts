@@ -12,7 +12,20 @@ export type Story = {
   word: string;
   body: string;
   status: StoryStatus;
+  /** みんなのライブラリから外したもの */
+  hidden: boolean;
   created_at: string;
+};
+
+/** みんなのライブラリに並べる1件 */
+export type LibraryItem = Pick<Story, "id" | "seq" | "word" | "body" | "hidden" | "created_at">;
+
+export type LibraryQuery = {
+  /** この seq より古いものを返す（「もっと見る」用）。省略すると最新から */
+  before?: number;
+  limit: number;
+  /** 外した作品も含める（運営用） */
+  includeHidden?: boolean;
 };
 
 /** DBの窓口。Supabase版と、ローカル確認用のメモリ版がある。 */
@@ -28,6 +41,10 @@ export interface Store {
   claimNext(): Promise<Story | null>;
   /** 表示中の物語を shown / skipped にする */
   finish(id: string, result: "shown" | "skipped"): Promise<void>;
+  /** 投影済みの作品を新しい順に返す */
+  listLibrary(q: LibraryQuery): Promise<LibraryItem[]>;
+  /** ライブラリから外す・戻す。対象が無ければ false */
+  setHidden(id: string, hidden: boolean): Promise<boolean>;
 }
 
 /** 日本時間の今日0時（ISO文字列） */
@@ -80,6 +97,21 @@ function supabaseStore(client: SupabaseClient): Store {
     async finish(id, result) {
       must(await client.from(TABLE).update({ status: result }).eq("id", id).eq("status", "showing"));
     },
+    async listLibrary({ before, limit, includeHidden }) {
+      let q = client
+        .from(TABLE)
+        .select("id, seq, word, body, hidden, created_at")
+        .eq("status", "shown")
+        .order("seq", { ascending: false })
+        .limit(limit);
+      if (before !== undefined) q = q.lt("seq", before);
+      if (!includeHidden) q = q.eq("hidden", false);
+      return must(await q) as LibraryItem[];
+    },
+    async setHidden(id, hidden) {
+      const rows = must(await client.from(TABLE).update({ hidden }).eq("id", id).select("id")) as { id: string }[];
+      return rows.length > 0;
+    },
   };
 }
 
@@ -98,6 +130,7 @@ function memoryStore(): Store {
         word,
         body,
         status: "queued",
+        hidden: false,
         created_at: new Date().toISOString(),
       };
       mem.rows.push(s);
@@ -128,6 +161,19 @@ function memoryStore(): Store {
     async finish(id, result) {
       const s = mem.rows.find((r) => r.id === id);
       if (s && s.status === "showing") s.status = result;
+    },
+    async listLibrary({ before, limit, includeHidden }) {
+      return mem.rows
+        .filter((r) => r.status === "shown" && (includeHidden || !r.hidden) && (before === undefined || r.seq < before))
+        .sort((a, b) => b.seq - a.seq)
+        .slice(0, limit)
+        .map(({ id, seq, word, body, hidden, created_at }) => ({ id, seq, word, body, hidden, created_at }));
+    },
+    async setHidden(id, hidden) {
+      const s = mem.rows.find((r) => r.id === id);
+      if (!s) return false;
+      s.hidden = hidden;
+      return true;
     },
   };
 }

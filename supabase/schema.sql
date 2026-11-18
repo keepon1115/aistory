@@ -1,4 +1,5 @@
 -- Supabase の SQL Editor で、このファイル全体を1回流す。
+-- 何度流しても大丈夫（すでにあるテーブルには、足りない列だけを足す）。
 
 create table if not exists public.aistory_stories (
   id         uuid primary key default gen_random_uuid(),
@@ -7,11 +8,18 @@ create table if not exists public.aistory_stories (
   body       text not null,
   status     text not null default 'queued'
              check (status in ('queued', 'showing', 'shown', 'skipped')),
+  hidden     boolean not null default false,
   created_at timestamptz not null default now()
 );
 
+-- みんなのライブラリから外した作品は hidden = true（以前に作ったテーブルにも列を足す）
+alter table public.aistory_stories add column if not exists hidden boolean not null default false;
+
 create index if not exists aistory_stories_status_seq_idx on public.aistory_stories (status, seq);
 create index if not exists aistory_stories_created_at_idx on public.aistory_stories (created_at);
+-- ライブラリ用: 投影済みで、外していない作品を新しい順に
+create index if not exists aistory_stories_library_idx on public.aistory_stories (seq desc)
+  where status = 'shown' and not hidden;
 
 -- ブラウザから直接DBに触れないようにする（ポリシーは作らない）。
 -- サーバーは service role key で接続するので、RLSの影響を受けない。

@@ -4,6 +4,13 @@ import { FONT_STACK, glyphTransform, layoutCells } from "./manuscript";
 const CELL = 64;
 const MARGIN = 72;
 const FOOTER = 72;
+const LABEL_SIZE = 24;
+
+/** 保存画像の大きさ（scale = 1 のとき）。一覧の枠の縦横比にも使う */
+export const STORY_IMAGE_SIZE = {
+  width: CELL * IMAGE_GRID.cols + MARGIN * 2,
+  height: CELL * IMAGE_GRID.rows + MARGIN * 2 + FOOTER,
+};
 
 function fontFamily(): string {
   const fam = getComputedStyle(document.body).fontFamily;
@@ -11,26 +18,33 @@ function fontFamily(): string {
 }
 
 /** 本文に含まれる文字のフォントが読み込み済みになるまで待つ（最大8秒）。失敗しても描画は続ける */
-async function waitForFont(text: string, family: string): Promise<void> {
+async function waitForFont(text: string, family: string, cell: number): Promise<void> {
   // 代替フォント付きの一覧ではなく、先頭の1つだけを読み込む
   const primary = family.split(",")[0].trim();
   const load = Promise.allSettled([
-    document.fonts.load(`500 ${Math.round(CELL * 0.74)}px ${primary}`, text),
-    document.fonts.load(`500 24px ${primary}`, EVENT_LABEL),
+    document.fonts.load(`500 ${Math.round(cell * 0.74)}px ${primary}`, text),
+    document.fonts.load(`500 ${LABEL_SIZE}px ${primary}`, EVENT_LABEL),
   ]).then(() => document.fonts.ready);
   await Promise.race([load, new Promise((r) => setTimeout(r, 8000))]);
 }
 
-/** 保存用の縦長画像を canvas に描いて PNG にする。サーバーは使わない。 */
-export async function renderStoryImage(word: string, body: string): Promise<Blob> {
+/**
+ * 保存用の縦長画像を canvas に描いて PNG にする。サーバーは使わない。
+ * scale を小さくすると、同じ見た目の小さい画像になる（ライブラリの一覧用）。
+ */
+export async function renderStoryImage(word: string, body: string, scale = 1): Promise<Blob> {
+  const CELL_S = Math.round(CELL * scale);
+  const MARGIN_S = Math.round(MARGIN * scale);
+  const FOOTER_S = Math.round(FOOTER * scale);
+  const LABEL_S = Math.max(8, Math.round(LABEL_SIZE * scale));
   const family = fontFamily();
-  await waitForFont(word + body + EVENT_LABEL, family);
+  await waitForFont(word + body + EVENT_LABEL, family, CELL_S);
 
   const { rows, cols } = IMAGE_GRID;
-  const gridW = CELL * cols;
-  const gridH = CELL * rows;
-  const width = gridW + MARGIN * 2;
-  const height = gridH + MARGIN * 2 + FOOTER;
+  const gridW = CELL_S * cols;
+  const gridH = CELL_S * rows;
+  const width = gridW + MARGIN_S * 2;
+  const height = gridH + MARGIN_S * 2 + FOOTER_S;
 
   const canvas = document.createElement("canvas");
   canvas.width = width;
@@ -43,27 +57,27 @@ export async function renderStoryImage(word: string, body: string): Promise<Blob
 
   // マス目
   ctx.strokeStyle = COLORS.line;
-  ctx.lineWidth = 2;
+  ctx.lineWidth = Math.max(1, 2 * scale);
   ctx.beginPath();
   for (let c = 0; c <= cols; c++) {
-    ctx.moveTo(MARGIN + c * CELL, MARGIN);
-    ctx.lineTo(MARGIN + c * CELL, MARGIN + gridH);
+    ctx.moveTo(MARGIN_S + c * CELL_S, MARGIN_S);
+    ctx.lineTo(MARGIN_S + c * CELL_S, MARGIN_S + gridH);
   }
   for (let r = 0; r <= rows; r++) {
-    ctx.moveTo(MARGIN, MARGIN + r * CELL);
-    ctx.lineTo(MARGIN + gridW, MARGIN + r * CELL);
+    ctx.moveTo(MARGIN_S, MARGIN_S + r * CELL_S);
+    ctx.lineTo(MARGIN_S + gridW, MARGIN_S + r * CELL_S);
   }
   ctx.stroke();
 
   // 文字（右上から縦に流れる）
-  const fontSize = CELL * 0.74;
+  const fontSize = CELL_S * 0.74;
   ctx.font = `500 ${fontSize}px ${family}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   for (const c of layoutCells(word, body, rows, cols)) {
     const t = glyphTransform(c.char);
-    const cx = MARGIN + (cols - 1 - c.col) * CELL + CELL / 2;
-    const cy = MARGIN + c.row * CELL + CELL / 2;
+    const cx = MARGIN_S + (cols - 1 - c.col) * CELL_S + CELL_S / 2;
+    const cy = MARGIN_S + c.row * CELL_S + CELL_S / 2;
     ctx.save();
     ctx.translate(cx + t.dx * fontSize, cy + t.dy * fontSize);
     ctx.rotate((t.rotate * Math.PI) / 180);
@@ -73,11 +87,11 @@ export async function renderStoryImage(word: string, body: string): Promise<Blob
   }
 
   // 隅のラベル
-  ctx.font = `500 24px ${family}`;
+  ctx.font = `500 ${LABEL_S}px ${family}`;
   ctx.textAlign = "right";
   ctx.textBaseline = "alphabetic";
   ctx.fillStyle = "rgba(255,255,255,0.45)";
-  ctx.fillText(EVENT_LABEL, width - MARGIN, height - MARGIN / 2 - 8);
+  ctx.fillText(EVENT_LABEL, width - MARGIN_S, height - MARGIN_S / 2 - 8 * scale);
 
   return new Promise((resolve, reject) =>
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), "image/png"),

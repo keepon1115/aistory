@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { EVENT_LABEL, IMAGE_GRID } from "@/lib/config";
 import { renderStoryImage, saveImage } from "@/lib/storyImage";
@@ -50,6 +51,9 @@ export default function StoryView({ word, body, onAgain }: { word: string; body:
         <button onClick={onAgain} className="rounded-full px-6 py-3 text-base tracking-widest text-white/70">
           もう一度書く
         </button>
+        <Link href="/library" className="text-center text-sm tracking-widest text-white/60 underline underline-offset-4">
+          みんなのライブラリを見る
+        </Link>
       </div>
       {message && <p className="text-center text-sm text-white/70">{message}</p>}
       {previewUrl && (
