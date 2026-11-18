@@ -38,5 +38,8 @@ export const COLORS = {
   line: "rgba(255,255,255,0.16)",
 };
 
+/** みんなのライブラリで、1回に読みこむ件数 */
+export const LIBRARY_PAGE_SIZE = 24;
+
 export const STORAGE_KEY_STORY = "genko:storyId";
 export const STORAGE_KEY_LAST_SUBMIT = "genko:lastSubmitAt";
